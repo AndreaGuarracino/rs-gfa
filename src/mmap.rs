@@ -164,6 +164,70 @@ impl MmapGFA {
         self.next_line()
     }
 
+    /// Ask the kernel to populate the page tables for the whole
+    /// mapping up front, in parallel.
+    ///
+    /// Parsing a multi-gigabyte GFA otherwise takes a minor fault per
+    /// page, one at a time, interleaved with the parsing work. Doing
+    /// it in bulk beforehand is the same pages but far fewer traps.
+    ///
+    /// Best effort: if the kernel does not support populating, this
+    /// falls back to a readahead hint, and if that fails too it does
+    /// nothing.
+    #[cfg(target_os = "linux")]
+    pub fn prefault(&self) {
+        use rayon::prelude::*;
+
+        // Linux 5.14 and later
+        const MADV_POPULATE_READ: libc::c_int = 22;
+
+        let data: &[u8] = self.cursor.get_ref();
+        let len = data.len();
+
+        if len == 0 {
+            return;
+        }
+
+        let base = data.as_ptr() as usize;
+        let chunk = 64usize << 20;
+
+        let offsets: Vec<usize> = (0..len).step_by(chunk).collect();
+
+        let populated: usize = offsets
+            .par_iter()
+            .map(|&off| {
+                let this = chunk.min(len - off);
+
+                let res = unsafe {
+                    libc::madvise(
+                        (base + off) as *mut libc::c_void,
+                        this,
+                        MADV_POPULATE_READ,
+                    )
+                };
+
+                if res == 0 {
+                    1
+                } else {
+                    0
+                }
+            })
+            .sum();
+
+        if populated == 0 {
+            unsafe {
+                libc::madvise(
+                    base as *mut libc::c_void,
+                    len,
+                    libc::MADV_WILLNEED,
+                );
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn prefault(&self) {}
+
     /// As `build_index`, but scans the mapping in parallel.
     ///
     /// The file is split into one chunk per thread, each split point
