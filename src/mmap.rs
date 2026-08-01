@@ -1,7 +1,4 @@
-use crate::{
-    gfa::{Line, Link, Path, Segment},
-    parser::GFAParser,
-};
+use crate::{gfa::Line, parser::GFAParser};
 
 use anyhow::{bail, Result};
 
@@ -37,78 +34,6 @@ pub struct LineIndices {
     /// Only `build_index_par` fills this; the serial scan leaves it
     /// empty.
     pub path_lengths: Vec<usize>,
-}
-
-#[derive(Debug)]
-pub struct SegmentIter<'a> {
-    mmap: &'a mut MmapGFA,
-    parser: GFAParser<usize, ()>,
-}
-
-impl<'a> Iterator for SegmentIter<'a> {
-    type Item = Segment<usize, ()>;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Ok(line) = self.mmap.next_line() {
-            if let Some(b'S') = line.first() {
-                if let Some(Line::Segment(s)) =
-                    self.parser.parse_gfa_line(line).ok()
-                {
-                    return Some(s);
-                }
-            }
-        }
-        None
-    }
-}
-
-#[derive(Debug)]
-pub struct LinkIter<'a> {
-    mmap: &'a mut MmapGFA,
-    parser: GFAParser<usize, ()>,
-}
-
-impl<'a> Iterator for LinkIter<'a> {
-    type Item = Link<usize, ()>;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Ok(line) = self.mmap.next_line() {
-            if let Some(b'S') = line.first() {
-                if let Some(Line::Link(s)) =
-                    self.parser.parse_gfa_line(line).ok()
-                {
-                    return Some(s);
-                }
-            }
-        }
-        None
-    }
-}
-
-#[derive(Debug)]
-pub struct PathIter<'a> {
-    mmap: &'a mut MmapGFA,
-    parser: GFAParser<usize, ()>,
-}
-
-impl<'a> Iterator for PathIter<'a> {
-    type Item = Path<usize, ()>;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Ok(line) = self.mmap.next_line() {
-            if let Some(b'S') = line.first() {
-                if let Some(Line::Path(s)) =
-                    self.parser.parse_gfa_line(line).ok()
-                {
-                    return Some(s);
-                }
-            }
-        }
-        None
-    }
 }
 
 impl MmapGFA {
@@ -194,6 +119,33 @@ impl MmapGFA {
 
         let base = data.as_ptr() as usize;
         let chunk = 64usize << 20;
+
+        // Populating more than fits just evicts the early pages before
+        // the parse reaches them, so fall back to a hint instead.
+        // MemAvailable rather than MemFree, since reclaimable page
+        // cache counts as available.
+        let available = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|meminfo| {
+                meminfo
+                    .lines()
+                    .find(|l| l.starts_with("MemAvailable:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|kb| kb.parse::<usize>().ok())
+            })
+            .map(|kb| kb.saturating_mul(1024));
+
+        // half, because the caller builds its own structures from this
+        if available.map(|avail| len > avail / 2).unwrap_or(false) {
+            unsafe {
+                libc::madvise(
+                    base as *mut libc::c_void,
+                    len,
+                    libc::MADV_WILLNEED,
+                );
+            }
+            return;
+        }
 
         let offsets: Vec<usize> = (0..len).step_by(chunk).collect();
 
@@ -425,27 +377,6 @@ impl MmapGFA {
         Ok(gfa_line)
     }
 
-    pub fn iter_segments(&mut self, from_start: bool) -> SegmentIter<'_> {
-        if from_start {
-            self.cursor.set_position(0);
-        }
-        let parser = self.parser.clone();
-        SegmentIter { mmap: self, parser }
-    }
 
-    pub fn iter_links(&mut self, from_start: bool) -> LinkIter<'_> {
-        if from_start {
-            self.cursor.set_position(0);
-        }
-        let parser = self.parser.clone();
-        LinkIter { mmap: self, parser }
-    }
 
-    pub fn iter_paths(&mut self, from_start: bool) -> PathIter<'_> {
-        if from_start {
-            self.cursor.set_position(0);
-        }
-        let parser = self.parser.clone();
-        PathIter { mmap: self, parser }
-    }
 }
