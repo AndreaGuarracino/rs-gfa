@@ -33,6 +33,10 @@ pub struct LineIndices {
     pub segments: Vec<(usize, usize)>,
     pub links: Vec<usize>,
     pub paths: Vec<usize>,
+    /// byte length of each path line, in the same order as `paths`.
+    /// Only `build_index_par` fills this; the serial scan leaves it
+    /// empty.
+    pub path_lengths: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -245,6 +249,7 @@ impl MmapGFA {
                 segments: Vec::new(),
                 links: Vec::new(),
                 paths: Vec::new(),
+                path_lengths: Vec::new(),
             });
         }
 
@@ -283,6 +288,7 @@ impl MmapGFA {
                 let mut segments = Vec::new();
                 let mut links = Vec::new();
                 let mut paths = Vec::new();
+                let mut path_lengths = Vec::new();
 
                 let mut line_start = start;
 
@@ -293,7 +299,10 @@ impl MmapGFA {
                     match data[line_start] {
                         b'S' => segments.push((line_start, length)),
                         b'L' => links.push(line_start),
-                        b'P' => paths.push(line_start),
+                        b'P' => {
+                            paths.push(line_start);
+                            path_lengths.push(length);
+                        }
                         _ => (),
                     }
 
@@ -307,7 +316,10 @@ impl MmapGFA {
                     match data[line_start] {
                         b'S' => segments.push((line_start, length)),
                         b'L' => links.push(line_start),
-                        b'P' => paths.push(line_start),
+                        b'P' => {
+                            paths.push(line_start);
+                            path_lengths.push(length);
+                        }
                         _ => (),
                     }
                 }
@@ -316,6 +328,7 @@ impl MmapGFA {
                     segments,
                     links,
                     paths,
+                    path_lengths,
                 }
             })
             .collect();
@@ -323,17 +336,20 @@ impl MmapGFA {
         let mut segments = Vec::new();
         let mut links = Vec::new();
         let mut paths = Vec::new();
+        let mut path_lengths = Vec::new();
 
         for chunk in per_chunk {
             segments.extend(chunk.segments);
             links.extend(chunk.links);
             paths.extend(chunk.paths);
+            path_lengths.extend(chunk.path_lengths);
         }
 
         Ok(LineIndices {
             segments,
             links,
             paths,
+            path_lengths,
         })
     }
 
@@ -382,6 +398,7 @@ impl MmapGFA {
             segments,
             links,
             paths,
+            path_lengths: Vec::new(),
         };
 
         Ok(res)
