@@ -164,6 +164,115 @@ impl MmapGFA {
         self.next_line()
     }
 
+    /// As `build_index`, but scans the mapping in parallel.
+    ///
+    /// The file is split into one chunk per thread, each split point
+    /// moved forward to the next line break so no line is cut, and the
+    /// per-chunk results are concatenated in file order. That keeps the
+    /// segment, link and path orders identical to the serial scan.
+    pub fn build_index_par(&self) -> Result<LineIndices> {
+        use rayon::prelude::*;
+
+        let data: &[u8] = self.cursor.get_ref();
+        let len = data.len();
+
+        if len == 0 {
+            return Ok(LineIndices {
+                segments: Vec::new(),
+                links: Vec::new(),
+                paths: Vec::new(),
+            });
+        }
+
+        let threads = rayon::current_num_threads().max(1);
+        let target = (len / threads).max(1 << 20);
+
+        // split points, each advanced to just past a line break
+        let mut bounds: Vec<usize> = Vec::with_capacity(threads + 1);
+        bounds.push(0);
+
+        let mut at = target;
+        while at < len {
+            let cut = match memchr::memchr(b'\n', &data[at..]) {
+                Some(ix) => at + ix + 1,
+                None => len,
+            };
+
+            if cut >= len {
+                break;
+            }
+
+            if cut > *bounds.last().unwrap() {
+                bounds.push(cut);
+            }
+
+            at = cut + target;
+        }
+        bounds.push(len);
+
+        let chunks: Vec<(usize, usize)> =
+            bounds.windows(2).map(|w| (w[0], w[1])).collect();
+
+        let per_chunk: Vec<LineIndices> = chunks
+            .par_iter()
+            .map(|&(start, end)| {
+                let mut segments = Vec::new();
+                let mut links = Vec::new();
+                let mut paths = Vec::new();
+
+                let mut line_start = start;
+
+                for nl in memchr::memchr_iter(b'\n', &data[start..end]) {
+                    let line_end = start + nl + 1;
+                    let length = line_end - line_start;
+
+                    match data[line_start] {
+                        b'S' => segments.push((line_start, length)),
+                        b'L' => links.push(line_start),
+                        b'P' => paths.push(line_start),
+                        _ => (),
+                    }
+
+                    line_start = line_end;
+                }
+
+                // a final line with no trailing break
+                if line_start < end {
+                    let length = end - line_start;
+
+                    match data[line_start] {
+                        b'S' => segments.push((line_start, length)),
+                        b'L' => links.push(line_start),
+                        b'P' => paths.push(line_start),
+                        _ => (),
+                    }
+                }
+
+                LineIndices {
+                    segments,
+                    links,
+                    paths,
+                }
+            })
+            .collect();
+
+        let mut segments = Vec::new();
+        let mut links = Vec::new();
+        let mut paths = Vec::new();
+
+        for chunk in per_chunk {
+            segments.extend(chunk.segments);
+            links.extend(chunk.links);
+            paths.extend(chunk.paths);
+        }
+
+        Ok(LineIndices {
+            segments,
+            links,
+            paths,
+        })
+    }
+
     pub fn build_index(&mut self) -> Result<LineIndices> {
         let start_position = self.cursor.position();
         let current_line_len = self.current_line_len;
