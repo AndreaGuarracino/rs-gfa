@@ -183,7 +183,7 @@ impl CIGAR {
     }
 
     fn parse_op_cmd(input: &[u8]) -> IResult<&[u8], CIGAROp> {
-        use nom::{branch::alt, combinator::map};
+        use nom::{branch::alt, combinator::map, Parser};
         use CIGAROp::*;
         alt((
             map(tag("M"), |_| M),
@@ -195,13 +195,14 @@ impl CIGAR {
             map(tag("P"), |_| P),
             map(tag("="), |_| E),
             map(tag("X"), |_| X),
-        ))(input)
+        ))
+        .parse(input)
     }
 
     pub(crate) fn parser_bytestring(i: &[u8]) -> IResult<&[u8], Self> {
         use nom::{
             character::complete::digit1, combinator::map, multi::many1,
-            sequence::pair,
+            sequence::pair, Parser,
         };
         map(
             many1(map(
@@ -215,7 +216,8 @@ impl CIGAR {
                 CIGARPair::from_pair,
             )),
             CIGAR,
-        )(i)
+        )
+        .parse(i)
     }
 
     /// Parse a CIGAR object from an ASCII byte slice

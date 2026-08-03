@@ -19,7 +19,7 @@ rayon = "1.10"
 memchr = "2.7"
 lazy_static = "1.5"
 regex = "1.11"
-nom = "5"
+nom = "8"
 bytemuck = { version = "1.25", features = ["derive"] }
 fnv = "1.0"
 serde = { version = "1.0", features = ["derive"], optional =  true}

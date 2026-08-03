@@ -85,12 +85,12 @@ impl GAFStep {
     // strand of a path step, so we need another Orientation parser to
     // reuse that type here
     fn parse_orient(bytes: &[u8]) -> IResult<&[u8], Orientation> {
-        use nom::{branch::alt, combinator::map};
+        use nom::{branch::alt, combinator::map, Parser};
         use Orientation::*;
 
         let fwd = map(tag(">"), |_| Forward);
         let bwd = map(tag("<"), |_| Backward);
-        alt((fwd, bwd))(bytes)
+        alt((fwd, bwd)).parse(bytes)
     }
 
     pub(crate) fn parse_step(i: &[u8]) -> IResult<&[u8], GAFStep> {
@@ -98,23 +98,27 @@ impl GAFStep {
             character::complete::digit1,
             combinator::{map, opt},
             sequence::{preceded, separated_pair},
+            Parser,
         };
 
         let (i, orient) = Self::parse_orient(i)?;
-        let (i, name) = is_not("<>: \t\r\n")(i)?;
+        let (i, name) = is_not("<>: \t\r\n").parse(i)?;
         let name = name.into();
 
-        let parse_digits = map(digit1, |bs| {
-            let s = unsafe { std::str::from_utf8_unchecked(bs) };
-            s.parse::<usize>().unwrap()
-        });
+        // a Parser is consumed by use in nom 8, so build one per slot
+        let digits = || {
+            map(digit1, |bs| {
+                let s = unsafe { std::str::from_utf8_unchecked(bs) };
+                s.parse::<usize>().unwrap()
+            })
+        };
 
         let parse_range = preceded(
             tag(":"),
-            separated_pair(&parse_digits, tag("-"), &parse_digits),
+            separated_pair(digits(), tag("-"), digits()),
         );
 
-        let (i, range) = opt(parse_range)(i)?;
+        let (i, range) = opt(parse_range).parse(i)?;
         if let Some((start, end)) = range {
             Ok((i, GAFStep::StableIntv(orient, name, start, end)))
         } else {
@@ -140,15 +144,17 @@ impl GAFPath {
         use nom::{
             combinator::{opt, verify},
             multi::many1,
+            Parser,
         };
-        let (i, path) = opt(many1(GAFStep::parse_step))(i)?;
+        let (i, path) = opt(many1(GAFStep::parse_step)).parse(i)?;
 
         if let Some(path) = path {
             Ok((i, GAFPath::OrientIntv(path)))
         } else {
             let (i, stable_id) = verify(is_not("\t"), |bs: &[u8]| {
                 bs.find_byteset("><").is_none()
-            })(i)?;
+            })
+            .parse(i)?;
             Ok((i, GAFPath::StableId(stable_id.into())))
         }
     }
