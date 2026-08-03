@@ -11,7 +11,7 @@ keywords = ["bioinformatics", "parser", "graph"]
 categories = ["science"]
 
 [features]
-serde1 = ["serde", "serde_json", "bstr/serde1"]
+serde1 = ["serde", "serde_json", "bstr/serde"]
 
 [dependencies]
 libc = "0.2"
@@ -29,9 +29,10 @@ anyhow = "1.0"
 memmap2 = "0.9"
 
 [dependencies.bstr]
-version = "0.2"
+version = "1.13"
 default-features = false
-features = ["std"]
+# `trim` and friends moved behind "unicode" in bstr 1
+features = ["std", "unicode"]
 
 [dev-dependencies]
 criterion = "0.3"
