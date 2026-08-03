@@ -2,7 +2,7 @@ use crate::{gfa::Line, parser::GFAParser};
 
 use anyhow::{bail, Result};
 
-use memmap::Mmap;
+use memmap2::Mmap;
 
 use std::fs::File;
 use std::io::prelude::*;
